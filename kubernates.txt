@@ -1,0 +1,496 @@
+Pesquisar imagens docker
+https://hub.docker.com/
+
+Criando um driver virtualizado com minikube usando virtualbox. Esse comando cria um driver de virtualização com o kubernetes dentro. Dessa forma, vamos usar o kubernetes sem precisar de um servidor extra (google, aws...)
+minikube start --vm-driver=virtualbox
+
+Obtendo os nodes do cluster
+kubectl get nodes
+
+Criando pods de forma imperativa
+kubectl run <nome do pod> --image=<nome da imagem>
+ex: kubectl run nginx-pod --image=nginx:latest
+
+Apagando / Deletando um pod criado de forma imperativa
+kubectl delete pod <nome do pods>
+
+Apagando / Deletando um pod criado de forma declarativa
+kubectl delete -f primeiro-pod.yaml
+
+Apagando todos os pods de uma só vez
+kubectl delete pods --all
+
+Criando pods de forma declarativa
+1- criamos um arquivo com extensao .yaml -> ex: primeiro-pod.yaml
+2- editamos o arquivo com as propriedades, com as informações abaixo
+apiVersion: v1
+kind: Pod
+metadata:
+  name:primeiro-pod-declarativo	
+spec:
+  containers:
+    - name: container-pod-1
+      image: nginx:latest
+
+
+
+3- kubectl apply -f .\primeiro-pod.yaml
+
+
+Listando pods criados
+kubectl get pods
+kubectl get pods -o wide
+
+Acompanhando a atualização de pods em tempo real
+kubectl get pods --watch
+
+
+Mostrando informações de um pod
+kubectl describe pod <nome do pod>
+
+Editando propriedades do pod
+kubectl edit pod <nome do pod>
+
+
+Executando comandos no pod de maneira interativa
+kubectl exec -it portal-noticias -- bash
+
+
+Lidando com um projeto no Kubernetes,como garantir a necessidade que um conjunto de pods ser acessível por outros componentes do sistema?
+- Usando o service;
+	- Abstrações para expor aplicações executando em um ou mais pods
+	- Fazem balanceamento de carga
+	- Proveem ip's fixos para um ou mais pods
+	- Proveem um DNS para um ou mais pods
+Ou seja, um pod só se comunica com outro pod através do service
+
+POD1 <-----------> SVC <---------------> POD2
+
+Temos 3 tipos de serviços:
+	- ClusterIP 
+	- NodePort
+	- LoadBalancer
+
+****************************************************************************************
+
+* ClusterIP (Comunicação interna entre pods dentro de um cluster)
+Podemos comunicar diferentes pods dentro do mesmo cluster através de seu IP. O problema é que essa comunicação é instável, porque quando o pod e destruído e reconstruído o ip não é garantia que será o mesmo. Nesse caso, devemos criar um SERVICE, que será o responsável por essa comunicação:
+Obs: No POD, criaremos a propriedade "labels", onde informaremos uma propriedade chave/valor que será usado na SERVICE na propriedade "selector". Também podemos configurar a propriedade "ports", que será a porta onde o serviço receberá a requisição e encaminhará para o POD
+
+1 - Criaremos o POD, com algumas alterações.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-2
+  labels:
+    app: segundo-pod
+spec:
+  containers:
+    - name: container-pod-2
+      image: nginx:latest
+      ports:
+        - containerPort: 80
+
+2 - Criaremos o SERVICE, que será o responsável de prover a comunicação ao POD
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-pod-2
+spec:
+  type: ClusterIP
+  selector:
+    app: segundo-pod  
+  ports:
+    - port: 9000
+      targetPort: 80  
+
+
+* Listar serviços:
+kubectl get svc
+kubectl get service
+
+
+****************************************************************************************
+
+* NodePort - Permite a comunicação com o mundo externo. Podemos comunicar outra máquina fora do cluster com os pods do cluster. O NodePort também funciona como um ClusterIP, ou seja, os pods podem ser comunicar internamente no cluster. Para termos acesso externo ao cluster, temos que obter o IP do node, com o comando: kubectl get nodes -o wide. Com esse comando, obteremos o IP do node e usaremos a porta que faz o bind do Service.
+
+
+1 - Criaremos o POD, com algumas alterações.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-1
+  labels:
+    app: primeiro-pod
+spec:
+  containers:
+    - name: container-pod-1
+      image: nginx:latest
+      ports:
+        - containerPort: 80
+
+2 - Criaremos o service
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-pod-1
+spec:
+  type: NodePort
+  selector:
+    app: primeiro-pod
+  ports:
+    - port: 80    
+      nodePort: 30000
+
+
+
+
+
+************************************************************************
+Podemos definir algumas variáveis de ambiente no pod para que a aplicação consiga se comunicar corretamente com outros serviços no cluster, como por exemplo, conectar a um banco de dados. Para isso, podemos usar um ConfigMap.
+
+1- Definir o arquivo para configuração do configmap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-configmap
+data:
+  MYSQL_ROOT_PASSWORD: q1w2e3r4
+  MYSQL_DATABASE: empresa
+  MYSQL_PASSWORD: q1w2e3r4
+
+2- No pod que fará uso dessa configuração, devemos definir o configmap criado
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-noticias
+  labels:
+    app: db-noticias
+spec:
+  containers:
+    - name: db-noticias-container
+      image: aluracursos/mysql-db:1
+      ports:
+        - containerPort: 3306
+      envFrom:
+        - configMapRef: 
+            name: db-configmap    
+
+***************************************************************************
+TOPICOS AVANCADOS
+
+Os Pods são efêmeros, ou seja, podem ser excluídos, removidos, reiniciados... etc. Para que esse gerenciamento possa ser feito de forma automatica, usaremos os recursos abaixo:
+
+rs -> replicas set
+deploy -> deployments 
+
+
+REPLICAS SET => Estrutura que encapsula um ou mais pods, e pode gerenciar um ou mais pods ao mesmo tempo. Caso algum pod falhe, o rs cria automaticamente um novo em seu lugar.
+
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: portal-noticias-deployment
+spec:
+  template:
+    metadata:
+      name: portal-noticias
+      labels:
+        app: portal-noticias
+    spec:
+      containers:
+        - name: portal-noticias-container
+          image: aluracursos/portal-noticias:1
+          ports:
+            - containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: portal-configmap
+  replicas: 3
+  # selector informa ao kubernetes que esse deployment deve gerenciar esse pod
+  selector:
+    matchLabels:
+      app: portal-noticias
+
+
+Visualizar os replica set
+* kubectl get rs
+
+ ***************************************************************************************     
+
+DEPLOYMENT => O deployment é uma camada acima do replica set, ou seja, na verdade quando definimos um deployment, estamos também definindo um replica set. O que ganhamos de adicional nessa abordagem é que o deployment faz o controle de versionamento das nossas imagens. Na criação do arquivo, as propriedades são identicas ao replica set. A unica mudança é na propriedade kind
+
+kind: Deployment
+
+Com o uso do deployment, temos alguns comandos adicionais:
+Verificar histórico do deployment
+* kubectl rollout history deployment <nome do deployment>
+
+Caso façamos uma alteração na configuração do container dentro do arquivo de deployment (como alteração da versão da imagem, por exemplo), podemos ver com o comando acima que foi criada uma nova versão desse deployment.
+Obs: após a alteração do arquivo, informe o comando abaixo para atualizar o seu deployment:
+* kubectl -f <arquivo yaml do deployment> --record
+
+Alterando o texto da CHANGE-CAUSE
+* kubectl annotate deployment nginx-deployment kubernetes.io/change-cause="Foi definida uma nova versão para a imagem ....."
+
+Voltar para uma versão especifica
+* kubectl rollout undo deployment nginx-deployment --to-revision=2
+
+
+*******************************************************************************
+PERSISTINDO DADOS NO KUBERNETES
+
+vol => volumes
+pv => persistence volumes
+pvc => persistence volumes claim
+sc => storages classes
+
+VOLUMES => Podemos usar volumes para persistir informações em um pod. Eles são indedpendentes dos containers, mas são dependentes dos pods. O volume é criado dentro do POD. Enquando o POD que armazena o volume existir, as informações estarão salvas. Quando esse POD deixar de existir, as informações serão perdidas.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-volume
+spec:
+  containers:
+    - name: nginx-container
+      image: nginx:latest
+      volumeMounts:
+        # caminho dentro do container nginx-container
+        - mountPath: /volume-dentro-do-container
+          name: primeiro-volume
+    - name: jenkins-container
+      image: jenkins:alpine
+      volumeMounts:
+        # caminho dentro do container jenkins-container
+        - mountPath: /volume-dentro-do-container
+          name: primeiro-volume
+  volumes:
+    - name: primeiro-volume
+      hostPath:
+        # caminho dentro da maquina
+        path: /home/primeiro-volume
+        type: Directory
+
+Obs: no nosso caso como estamos usando o minikube como uma maquina virtual, o caminho definido com path acima será dentro do minikube, e deverá ser criado previamente. Para criar essa pasta dentro do minikube, faz o seguinte:
+* minikube ssh 
+após acessar o minikube, podemos criar normalmente o caminho dentro da pasta home
+* mkdir primeiro-volume
+
+Outra alternativa, é solicitar a criação dessa caminho de forma automática, alterando o parametro type para DirectoryOrCreate dentro do arquivo yaml que cria o volume.
+* type: DirectoryOrCreate
+
+
+
+
+PERSISTENTVOLUMES:  PVs são plugins de volume da mesma forma que Volumes, porém eles têm um ciclo de vida independente de qualquer Pod que utilize um PV.
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  gcePersistentDisk:
+    pdName: pv-disk
+  storageClassName: standard
+
+
+
+PERSISTENTVOLUMES: Uma PersistentVolumeClaim (PVC) é uma requisição para armazenamento por um usuário. É similar a um Pod. Pods utilizam recursos do nó e PVCs utilizam recursos do PV. 
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-1
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+
+
+Configurando o POD para acessar o PVC
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-pv
+spec:
+  containers:
+    - name: nginx-container
+      image: nginx:latest
+      volumeMounts:
+        - mountPath: /volume-dentro-do-container
+          name: primeiro-pv
+  volumes:
+    - name: primeiro-pv
+      persistentVolumeClaim:
+        claimName: pvc-1
+
+
+Resumo: Após criar um disco no node, o pod pode precisar acessar um PVC que acessa o PV para obter as informações.
+
+
+
+STORAGE CLASSE: permite criar dinamicamente os pvc e discos dinamicamentes:
+
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: slow
+provisioner: kubernetes.io/local
+parameters:
+  type: pd-standard
+  fstype: ext4
+
+*****************************************************************************************************
+
+PROBES
+
+Apesar do Pod estar saudável e funcionando, a aplicação dentro do container deste Pod não está respondendo da maneira esperada. E para resolver este tipo de problema, nós temos os Configure Liveness, Readiness e Startup Probes. 
+
+LIVENESS PROBES: Testa o retorno do codigo http do container dentro do pod. O criterio de aceitacao é que o código acima de 200 e abaixo de 400 está ok, caso contrário, pode estar ocorrendo um erro.
+
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal-noticias-deployment
+spec:
+  template:
+    metadata:
+      name: portal-noticias
+      labels:
+        app: portal-noticias
+    spec:
+      containers:
+        - name: portal-noticias-container
+          image: aluracursos/portal-noticias:2
+          ports:
+            - containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: portal-configmap
+
+******************INICIO DAS CONFIGURAÇÕES DOS PROBES***************
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 10 # A cada 10s faz a avaliação do container para ver se está ok
+            failureThreshold: 3 # limite de 3 falhas antes de reiniciar o container
+            initialDelaySeconds: 20 # atraso inicial antes de executar os testes
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 10
+            failureThreshold: 5
+            initialDelaySeconds: 3
+          resources:
+            requests:
+              cpu: 10m
+**************************************************
+  replicas: 3
+  # selector informa ao kubernetes que esse deployment deve gerenciar esse pod
+  selector:
+    matchLabels:
+      app: portal-noticias
+
+
+
+
+
+***********************************************************************************************
+
+HPA: horinzontal pod autoscaler: Objeto do kubernetes que define a quantidade de pods de acordo com as métricas de consumo.
+Obs: precisamos de um servidor de metricas para que o HPA possa escalonar nossa aplicação.
+No linux, podemos habilitar esse servidor no minikube:
+* Listar os serviços 
+minikube addons list
+minikube addons enable metrics-server
+
+
+
+
+
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: portal-noticias-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: portal-noticias-deployment
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+
+
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal-noticias-deployment
+spec:
+  template:
+    metadata:
+      name: portal-noticias
+      labels:
+        app: portal-noticias
+    spec:
+      containers:
+        - name: portal-noticias-container
+          image: aluracursos/portal-noticias:2
+          ports:
+            - containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: portal-configmap
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 10
+            failureThreshold: 3
+            initialDelaySeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 10
+            failureThreshold: 5
+            initialDelaySeconds: 3
+          resources:
+            requests:
+              cpu: 10m => metrica para o HPA
+  replicas: 3
+  # selector informa ao kubernetes que esse deployment deve gerenciar esse pod
+  selector:
+    matchLabels:
+      app: portal-noticias
+
+
+Suporte para HorizontalPodAutoscaler em kubectl
+O HorizontalPodAutoscaler, como todo recurso de API, é suportado de maneira padrão pelo kubectl. Você pode criar um novo dimensionador automático usando kubectl createo comando. Você pode listar autoescaladores por kubectl get hpaou obter uma descrição detalhada por kubectl describe hpa. Por fim, você pode excluir um escalonador automático usando kubectl delete hpa.
+
+Além disso, existe um kubectl autoscalecomando especial para criar um objeto HorizontalPodAutoscaler. Por exemplo, a execução kubectl autoscale rs foo --min=2 --max=5 --cpu-percent=80 criará um dimensionador automático para ReplicaSet foo , com a utilização de CPU de destino definida como 80% e o número de réplicas entre 2 e 5.
+
+
+
